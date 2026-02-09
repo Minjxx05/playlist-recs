@@ -1,2 +1,2 @@
-openai
-streamlit 
+streamlit>=1.31
+ytmusicapi>=1.11.5
