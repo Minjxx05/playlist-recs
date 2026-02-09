@@ -1,198 +1,116 @@
-import time
-import requests
 import streamlit as st
+from ytmusicapi import YTMusic
 
-SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
-SPOTIFY_API_BASE = "https://api.spotify.com/v1"
+st.set_page_config(page_title="🎧 기분 기반 YouTube Music 추천", page_icon="🎧", layout="wide")
 
-st.set_page_config(page_title="🎧 기분 기반 음악 추천", page_icon="🎧", layout="wide")
+# 로그인 없이도 검색 가능 (비공식 라이브러리)
+ytmusic = YTMusic()
 
-# -----------------------
-# Mood mapping (검색어/장르/추천이유)
-# -----------------------
 MOODS = {
     "행복🙂": {
-        "seed_genres": ["pop", "dance", "k-pop"],
-        "search_terms": ["happy", "feel good", "upbeat", "party", "신나는", "기분좋은"],
-        "reason": "기분이 좋을 땐 에너지와 리듬감이 있는 곡이 잘 어울려요!",
-        "targets": {"target_valence": 0.85, "target_energy": 0.75, "target_danceability": 0.75},
+        "queries": ["happy upbeat", "feel good", "party pop", "신나는 팝", "기분좋은 노래"],
+        "reason": "기분 좋을 땐 리듬감 있고 밝은 곡이 더 잘 어울려요!",
     },
     "평온😌": {
-        "seed_genres": ["chill", "acoustic", "indie", "jazz"],
-        "search_terms": ["chill", "calm", "relax", "peaceful", "잔잔한", "편안한"],
-        "reason": "차분한 날엔 잔잔하고 따뜻한 톤의 곡이 집중과 휴식에 좋아요.",
-        "targets": {"target_valence": 0.55, "target_energy": 0.35, "target_acousticness": 0.7},
+        "queries": ["chill", "calm acoustic", "lofi", "잔잔한", "편안한 노래"],
+        "reason": "차분한 날엔 잔잔하고 따뜻한 사운드가 좋아요.",
     },
     "우울😢": {
-        "seed_genres": ["sad", "indie", "acoustic", "r-n-b"],
-        "search_terms": ["sad", "melancholy", "ballad", "위로", "감성", "슬픈"],
-        "reason": "마음이 가라앉을 땐 감정을 정리해주는 감성적인 곡이 도움이 돼요.",
-        "targets": {"target_valence": 0.25, "target_energy": 0.3, "target_acousticness": 0.55},
+        "queries": ["sad songs", "melancholy", "korean ballad", "감성 발라드", "위로 노래"],
+        "reason": "마음이 가라앉을 땐 감정을 다독이는 곡이 도움이 돼요.",
     },
     "분노😡": {
-        "seed_genres": ["rock", "metal", "hip-hop", "punk"],
-        "search_terms": ["angry", "rage", "intense", "빡센", "강렬한", "분노"],
-        "reason": "화가 난 날엔 강한 비트/기타 사운드로 에너지를 안전하게 배출해보자!",
-        "targets": {"target_valence": 0.35, "target_energy": 0.9, "target_tempo": 140},
+        "queries": ["angry", "rage rock", "intense hip hop", "강렬한", "빡센 노래"],
+        "reason": "화가 난 날엔 강한 에너지의 곡으로 스트레스를 풀어보자!",
     },
     "피곤😴": {
-        "seed_genres": ["sleep", "ambient", "chill", "lofi"],
-        "search_terms": ["sleep", "lofi", "study", "ambient", "잠", "힐링", "로파이"],
-        "reason": "피곤한 날엔 자극이 적고 반복적인 사운드가 부담을 덜어줘요.",
-        "targets": {"target_valence": 0.45, "target_energy": 0.2, "target_instrumentalness": 0.6},
+        "queries": ["sleep", "ambient", "relaxing piano", "수면", "힐링 음악"],
+        "reason": "피곤한 날엔 자극이 적고 편안한 곡이 좋아요.",
     },
 }
 
+def pick_thumbnail(thumbnails: list[dict]) -> str | None:
+    if not thumbnails:
+        return None
+    # 보통 여러 사이즈가 오니 가장 큰 것 선택
+    return sorted(thumbnails, key=lambda x: x.get("width", 0))[-1].get("url")
 
-# -----------------------
-# Spotify Auth (Client Credentials)
-# -----------------------
-@st.cache_data(show_spinner=False)
-def get_access_token(client_id: str, client_secret: str) -> dict:
-    """
-    Returns dict: {access_token, expires_at}
-    """
-    auth = requests.auth.HTTPBasicAuth(client_id, client_secret)
-    data = {"grant_type": "client_credentials"}
-    resp = requests.post(SPOTIFY_TOKEN_URL, auth=auth, data=data, timeout=15)
-    resp.raise_for_status()
-    payload = resp.json()
-    return {
-        "access_token": payload["access_token"],
-        "expires_at": int(time.time()) + int(payload.get("expires_in", 3600)) - 30,
-    }
+def search_songs(query: str, limit: int = 10):
+    # filter="songs" 는 곡 위주 결과
+    # ytmusicapi search 문서 참고 (resultType/thumbnails 등) :contentReference[oaicite:2]{index=2}
+    results = ytmusic.search(query, filter="songs", limit=limit) or []
+    songs = []
+    for r in results:
+        video_id = r.get("videoId")
+        if not video_id:
+            continue
+        title = r.get("title", "Unknown")
+        artists = ", ".join([a.get("name", "") for a in (r.get("artists") or [])]) or "Unknown"
+        album = (r.get("album") or {}).get("name")
+        duration = r.get("duration")
+        thumb = pick_thumbnail(r.get("thumbnails") or [])
+        url = f"https://music.youtube.com/watch?v={video_id}"
+        songs.append({
+            "title": title,
+            "artists": artists,
+            "album": album,
+            "duration": duration,
+            "thumb": thumb,
+            "url": url,
+        })
+    return songs
 
-
-def spotify_headers(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
-
-
-def safe_get_token() -> str:
-    client_id = st.secrets.get("SPOTIFY_CLIENT_ID", "")
-    client_secret = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
-        st.error("Spotify Client ID/Secret이 설정되지 않았어요. `.streamlit/secrets.toml`를 확인해줘!")
-        st.stop()
-
-    tok = st.session_state.get("spotify_token")
-    if not tok or time.time() >= tok["expires_at"]:
-        tok = get_access_token(client_id, client_secret)
-        st.session_state["spotify_token"] = tok
-    return tok["access_token"]
-
-
-# -----------------------
-# API calls
-# -----------------------
-def try_recommendations(token: str, mood_key: str, limit: int = 10, market: str = "KR"):
-    """
-    Tries /v1/recommendations first (may be restricted in some apps).
-    If fails, caller should fallback to search.
-    """
-    mood = MOODS[mood_key]
-    params = {
-        "limit": limit,
-        "market": market,
-        "seed_genres": ",".join(mood["seed_genres"][:3]),  # 최대 5개 seed 중 일부만 사용
-    }
-    params.update(mood["targets"])
-
-    url = f"{SPOTIFY_API_BASE}/recommendations"
-    r = requests.get(url, headers=spotify_headers(token), params=params, timeout=15)
-    if r.status_code == 200:
-        return r.json().get("tracks", [])
-    return None  # 실패 시 None
-
-
-def fallback_search_tracks(token: str, mood_key: str, limit: int = 10, market: str = "KR"):
-    mood = MOODS[mood_key]
-
-    # 검색어 구성: mood search_terms + 장르들 일부
-    q_terms = mood["search_terms"][:3]
-    g_terms = mood["seed_genres"][:2]
-    query = " ".join([*q_terms, *[f"genre:{g}" for g in g_terms]])
-
-    url = f"{SPOTIFY_API_BASE}/search"
-    params = {"q": query, "type": "track", "limit": limit, "market": market}
-    r = requests.get(url, headers=spotify_headers(token), params=params, timeout=15)
-    r.raise_for_status()
-    return r.json().get("tracks", {}).get("items", [])
-
-
-def simplify_track(t: dict) -> dict:
-    album = t.get("album", {}) or {}
-    images = album.get("images", []) or []
-    image_url = images[0]["url"] if images else None
-
-    artists = ", ".join([a.get("name", "") for a in t.get("artists", [])])
-    return {
-        "name": t.get("name"),
-        "artists": artists,
-        "album": album.get("name"),
-        "image_url": image_url,
-        "preview_url": t.get("preview_url"),
-        "external_url": (t.get("external_urls", {}) or {}).get("spotify"),
-        "popularity": t.get("popularity"),
-    }
-
-
-# -----------------------
-# UI
-# -----------------------
-st.title("🎧 오늘의 기분 기반 음악 추천")
-st.caption("Spotify Web API (Client Credentials)로 기분에 맞는 곡을 추천합니다.")
+st.title("🎧 오늘의 기분 기반 음악 추천 (YouTube Music)")
+st.caption("※ YouTube Music은 공식 Web API가 없어 비공식 라이브러리(ytmusicapi)로 검색 기반 추천을 구현합니다.")
 
 with st.sidebar:
-    st.header("🔑 Spotify API 설정")
-    st.write("로컬은 `.streamlit/secrets.toml`에 넣고, 배포는 Streamlit Cloud의 Secrets에 넣어줘.")
-    st.divider()
-
+    st.header("설정")
     mood_key = st.selectbox("오늘의 기분을 선택해줘", list(MOODS.keys()))
-    market = st.selectbox("Market", ["KR", "US", "JP", "GB"], index=0)
     limit = st.slider("추천 곡 개수", 5, 20, 10)
+    st.divider()
+    go = st.button("🎶 추천 받기", use_container_width=True)
 
-    do = st.button("🎶 추천 받기", use_container_width=True)
-
-if do:
-    token = safe_get_token()
-
-    with st.spinner("Spotify에서 곡을 고르는 중..."):
-        tracks = try_recommendations(token, mood_key, limit=limit, market=market)
-
-        used = "recommendations"
-        if tracks is None:
-            # /recommendations 제한/실패 시 Search로 폴백
-            tracks = fallback_search_tracks(token, mood_key, limit=limit, market=market)
-            used = "search"
-
+if go:
     mood = MOODS[mood_key]
-    st.subheader(f"✨ {mood_key} 추천 결과")
+    st.subheader(f"✨ {mood_key} 추천")
     st.info(f"이유: {mood['reason']}")
-    st.caption(f"사용한 방식: {used} (recommendations 실패 시 search로 자동 전환)")
 
-    if not tracks:
-        st.warning("추천 결과가 비어 있어요. 다른 기분/마켓으로 다시 시도해봐!")
+    # 여러 쿼리를 돌려서 결과를 모으고, 중복 제거
+    with st.spinner("YouTube Music에서 곡을 찾는 중..."):
+        combined = []
+        seen = set()
+        per_query = max(3, limit // max(1, len(mood["queries"]) // 2))  # 대충 분배
+
+        for q in mood["queries"]:
+            for s in search_songs(q, limit=per_query):
+                key = (s["title"], s["artists"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                combined.append(s)
+                if len(combined) >= limit:
+                    break
+            if len(combined) >= limit:
+                break
+
+    if not combined:
+        st.warning("검색 결과가 비어 있어요. 다른 기분으로 시도해보거나, 쿼리(키워드)를 바꿔보자!")
         st.stop()
 
-    simple = [simplify_track(t) for t in tracks]
-
-    # 카드 형태로 표시
-    for i, tr in enumerate(simple, start=1):
+    for i, s in enumerate(combined, start=1):
         with st.container(border=True):
             cols = st.columns([1, 3])
             with cols[0]:
-                if tr["image_url"]:
-                    st.image(tr["image_url"], use_container_width=True)
+                if s["thumb"]:
+                    st.image(s["thumb"], use_container_width=True)
             with cols[1]:
-                st.markdown(f"### {i}. {tr['name']}")
-                st.write(f"**아티스트:** {tr['artists']}")
-                st.write(f"**앨범:** {tr['album']}")
-                if tr["popularity"] is not None:
-                    st.write(f"**인기도:** {tr['popularity']}/100")
-                if tr["external_url"]:
-                    st.link_button("Spotify에서 열기", tr["external_url"])
-                if tr["preview_url"]:
-                    st.audio(tr["preview_url"])
+                st.markdown(f"### {i}. {s['title']}")
+                st.write(f"**아티스트:** {s['artists']}")
+                if s["album"]:
+                    st.write(f"**앨범:** {s['album']}")
+                if s["duration"]:
+                    st.write(f"**길이:** {s['duration']}")
+                st.link_button("YouTube Music에서 열기", s["url"])
 
 else:
     st.write("왼쪽에서 기분을 고르고 **추천 받기**를 눌러줘 🙂")
