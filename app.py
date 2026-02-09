@@ -1,9 +1,22 @@
 import streamlit as st
-from ytmusicapi import YTMusic
 
 st.set_page_config(page_title="🎧 기분 기반 YouTube Music 추천", page_icon="🎧", layout="wide")
 
-# 로그인 없이도 검색 가능 (비공식 라이브러리)
+# ✅ ytmusicapi가 없을 때 앱이 죽지 않도록 처리
+try:
+    from ytmusicapi import YTMusic
+except ModuleNotFoundError:
+    st.error(
+        "❌ 'ytmusicapi' 패키지가 설치되어 있지 않아요.\n\n"
+        "✅ 해결 방법:\n"
+        "1) 레포에 requirements.txt가 있는지 확인\n"
+        "2) requirements.txt에 아래 줄 추가\n"
+        "   ytmusicapi>=1.11.5\n"
+        "3) Streamlit Cloud에서 재배포(자동 재빌드) 또는 'Reboot app'\n"
+    )
+    st.stop()
+
+# 로그인 없이도 검색 가능
 ytmusic = YTMusic()
 
 MOODS = {
@@ -29,15 +42,12 @@ MOODS = {
     },
 }
 
-def pick_thumbnail(thumbnails: list[dict]) -> str | None:
+def pick_thumbnail(thumbnails):
     if not thumbnails:
         return None
-    # 보통 여러 사이즈가 오니 가장 큰 것 선택
     return sorted(thumbnails, key=lambda x: x.get("width", 0))[-1].get("url")
 
 def search_songs(query: str, limit: int = 10):
-    # filter="songs" 는 곡 위주 결과
-    # ytmusicapi search 문서 참고 (resultType/thumbnails 등) :contentReference[oaicite:2]{index=2}
     results = ytmusic.search(query, filter="songs", limit=limit) or []
     songs = []
     for r in results:
@@ -50,18 +60,20 @@ def search_songs(query: str, limit: int = 10):
         duration = r.get("duration")
         thumb = pick_thumbnail(r.get("thumbnails") or [])
         url = f"https://music.youtube.com/watch?v={video_id}"
-        songs.append({
-            "title": title,
-            "artists": artists,
-            "album": album,
-            "duration": duration,
-            "thumb": thumb,
-            "url": url,
-        })
+        songs.append(
+            {
+                "title": title,
+                "artists": artists,
+                "album": album,
+                "duration": duration,
+                "thumb": thumb,
+                "url": url,
+            }
+        )
     return songs
 
 st.title("🎧 오늘의 기분 기반 음악 추천 (YouTube Music)")
-st.caption("※ YouTube Music은 공식 Web API가 없어 비공식 라이브러리(ytmusicapi)로 검색 기반 추천을 구현합니다.")
+st.caption("※ YouTube Music 공식 API가 없어 ytmusicapi로 '검색 기반 추천'을 구현합니다.")
 
 with st.sidebar:
     st.header("설정")
@@ -75,12 +87,11 @@ if go:
     st.subheader(f"✨ {mood_key} 추천")
     st.info(f"이유: {mood['reason']}")
 
-    # 여러 쿼리를 돌려서 결과를 모으고, 중복 제거
     with st.spinner("YouTube Music에서 곡을 찾는 중..."):
         combined = []
         seen = set()
-        per_query = max(3, limit // max(1, len(mood["queries"]) // 2))  # 대충 분배
 
+        per_query = max(3, limit // max(1, len(mood["queries"]) // 2))
         for q in mood["queries"]:
             for s in search_songs(q, limit=per_query):
                 key = (s["title"], s["artists"])
@@ -94,7 +105,7 @@ if go:
                 break
 
     if not combined:
-        st.warning("검색 결과가 비어 있어요. 다른 기분으로 시도해보거나, 쿼리(키워드)를 바꿔보자!")
+        st.warning("검색 결과가 비어 있어요. 다른 기분으로 시도해봐!")
         st.stop()
 
     for i, s in enumerate(combined, start=1):
@@ -111,6 +122,5 @@ if go:
                 if s["duration"]:
                     st.write(f"**길이:** {s['duration']}")
                 st.link_button("YouTube Music에서 열기", s["url"])
-
 else:
     st.write("왼쪽에서 기분을 고르고 **추천 받기**를 눌러줘 🙂")
