@@ -2,220 +2,258 @@ import streamlit as st
 
 st.set_page_config(page_title="🎧 기분/상황 기반 YouTube Music 추천", page_icon="🎧", layout="wide")
 
-# ✅ ytmusicapi가 없을 때 앱이 죽지 않도록 처리
 try:
     from ytmusicapi import YTMusic
 except ModuleNotFoundError:
     st.error(
         "❌ 'ytmusicapi' 패키지가 설치되어 있지 않아요.\n\n"
-        "✅ 해결 방법:\n"
-        "1) 레포에 requirements.txt가 있는지 확인\n"
-        "2) requirements.txt에 아래 줄 추가\n"
-        "   ytmusicapi>=1.11.5\n"
-        "3) Streamlit Cloud에서 재배포(자동 재빌드) 또는 'Reboot app'\n"
+        "✅ requirements.txt에 아래 줄을 추가해줘:\n"
+        "ytmusicapi>=1.11.5"
     )
     st.stop()
 
 ytmusic = YTMusic()
 
-
-# -----------------------
-# 기분/상황/장르 옵션
-# -----------------------
 MOODS = {
-    "행복🙂": {
-        "base_terms": ["happy", "upbeat", "feel good", "신나는", "기분좋은"],
-        "reason": "기분 좋을 땐 리듬감 있고 밝은 곡이 더 잘 어울려요!",
-    },
-    "평온😌": {
-        "base_terms": ["chill", "calm", "relax", "잔잔한", "편안한"],
-        "reason": "차분한 날엔 잔잔하고 따뜻한 사운드가 좋아요.",
-    },
-    "우울😢": {
-        "base_terms": ["sad", "melancholy", "emotional", "감성", "위로"],
-        "reason": "마음이 가라앉을 땐 감정을 다독이는 곡이 도움이 돼요.",
-    },
-    "분노😡": {
-        "base_terms": ["angry", "rage", "intense", "강렬한", "빡센"],
-        "reason": "화가 난 날엔 강한 에너지의 곡으로 스트레스를 풀어보자!",
-    },
-    "피곤😴": {
-        "base_terms": ["sleep", "ambient", "relaxing", "힐링", "수면"],
-        "reason": "피곤한 날엔 자극이 적고 편안한 곡이 좋아요.",
-    },
+    "행복🙂": {"base_terms": ["happy", "upbeat", "feel good", "신나는", "기분좋은"], "reason": "밝고 에너지 있는 곡이 잘 어울려요!"},
+    "평온😌": {"base_terms": ["chill", "calm", "relax", "잔잔한", "편안한"], "reason": "잔잔하고 따뜻한 사운드가 좋아요."},
+    "우울😢": {"base_terms": ["sad", "melancholy", "emotional", "감성", "위로"], "reason": "감정을 다독이는 곡이 도움이 돼요."},
+    "분노😡": {"base_terms": ["angry", "rage", "intense", "강렬한", "빡센"], "reason": "강한 에너지로 스트레스를 풀어봐요!"},
+    "피곤😴": {"base_terms": ["sleep", "ambient", "relaxing", "힐링", "수면"], "reason": "자극이 적고 편안한 곡이 좋아요."},
 }
 
 SITUATIONS = {
     "선택 안 함": [],
-    "드라이브 🚗": ["drive", "driving", "road trip", "차에서 듣기", "드라이브 플레이리스트"],
-    "공부/집중 📚": ["study", "focus", "concentration", "공부할 때", "집중 음악", "lofi"],
-    "운동 🏋️": ["workout", "gym", "running", "운동할 때", "헬스 음악", "high energy"],
-    "출퇴근 🚇": ["commute", "subway", "on the way", "출퇴근", "이동할 때"],
-    "파티/모임 🎉": ["party", "dance", "club", "파티", "신나는 노래"],
-    "힐링/휴식 🛋️": ["healing", "relax", "rest", "휴식", "힐링 음악"],
+    "드라이브 🚗": ["drive", "driving", "road trip", "드라이브", "차에서 듣기"],
+    "공부/집중 📚": ["study", "focus", "집중", "공부할 때", "lofi"],
+    "운동 🏋️": ["workout", "gym", "running", "운동", "헬스"],
+    "출퇴근 🚇": ["commute", "출퇴근", "이동할 때"],
+    "파티/모임 🎉": ["party", "dance", "파티", "신나는"],
+    "힐링/휴식 🛋️": ["healing", "relax", "휴식", "힐링"],
 }
 
-# 장르(선택 옵션) — 필수 아님
 GENRES = {
     "선택 안 함": [],
-    "K-pop": ["k-pop", "kpop", "케이팝"],
+    "K-pop": ["k-pop", "kpop", "케이팝", "아이돌", "가요"],
     "Pop": ["pop"],
     "J-pop": ["j-pop", "jpop", "일본 노래"],
     "Classic": ["classical", "classic", "클래식", "piano"],
 }
 
-
-# -----------------------
-# 유틸 & 검색
-# -----------------------
 def pick_thumbnail(thumbnails):
     if not thumbnails:
         return None
     return sorted(thumbnails, key=lambda x: x.get("width", 0))[-1].get("url")
 
+def normalize_key(title, artists):
+    return (title or "").strip().lower(), (artists or "").strip().lower()
 
-def build_queries(mood_key: str, situation_key: str, genre_key: str):
-    """기분 + 상황 + 장르를 조합해 여러 개 검색 쿼리를 만든다."""
-    mood_terms = MOODS[mood_key]["base_terms"]
-    situation_terms = SITUATIONS[situation_key]
-    genre_terms = GENRES[genre_key]
+def to_song_item_from_search(r, query=""):
+    video_id = r.get("videoId")
+    if not video_id:
+        return None
+    title = r.get("title", "Unknown")
+    artists = ", ".join([a.get("name", "") for a in (r.get("artists") or [])]) or "Unknown"
+    album = (r.get("album") or {}).get("name")
+    duration = r.get("duration")
+    thumb = pick_thumbnail(r.get("thumbnails") or [])
+    url = f"https://music.youtube.com/watch?v={video_id}"
+    return {
+        "title": title, "artists": artists, "album": album, "duration": duration,
+        "thumb": thumb, "url": url, "query": query
+    }
 
-    # 핵심 조합 (영/한 섞어서 검색 커버리지↑)
-    combos = []
+def to_song_item_from_playlist_track(t, query=""):
+    video_id = t.get("videoId")
+    if not video_id:
+        return None
+    title = t.get("title", "Unknown")
+    artists = ", ".join([a.get("name", "") for a in (t.get("artists") or [])]) or "Unknown"
+    album = (t.get("album") or {}).get("name")
+    duration = t.get("duration")
+    thumb = pick_thumbnail(t.get("thumbnails") or [])
+    url = f"https://music.youtube.com/watch?v={video_id}"
+    return {
+        "title": title, "artists": artists, "album": album, "duration": duration,
+        "thumb": thumb, "url": url, "query": query
+    }
 
-    # 1) 기본(기분)만
-    combos.append(" ".join(mood_terms[:3]))
+def search_playlists(query: str, limit: int = 5):
+    return ytmusic.search(query, filter="playlists", limit=limit) or []
 
-    # 2) 기분 + 상황
-    if situation_terms:
-        combos.append(" ".join(mood_terms[:2] + situation_terms[:3]))
-
-    # 3) 기분 + 장르
-    if genre_terms:
-        combos.append(" ".join(mood_terms[:2] + genre_terms[:2]))
-
-    # 4) 기분 + 상황 + 장르
-    if situation_terms and genre_terms:
-        combos.append(" ".join(mood_terms[:2] + situation_terms[:2] + genre_terms[:2]))
-
-    # 5) 상황 중심(플레이리스트 느낌)
-    if situation_terms:
-        combos.append(" ".join(situation_terms[:4]))
-
-    # 6) 장르 중심(장르만 골랐을 때도 먹히게)
-    if genre_terms:
-        combos.append(" ".join(genre_terms[:3] + ["playlist"]))
-
-    # 중복 제거
-    out, seen = [], set()
-    for q in combos:
-        q = q.strip()
-        if q and q not in seen:
-            seen.add(q)
-            out.append(q)
-    return out
-
+def get_playlist_tracks(playlist_id: str, limit: int = 100):
+    pl = ytmusic.get_playlist(playlist_id, limit=limit)
+    return (pl or {}).get("tracks", []) or []
 
 def search_songs(query: str, limit: int = 10):
-    # 곡 위주로 검색
     results = ytmusic.search(query, filter="songs", limit=limit) or []
-    songs = []
+    out = []
     for r in results:
-        video_id = r.get("videoId")
-        if not video_id:
+        item = to_song_item_from_search(r, query=query)
+        if item:
+            out.append(item)
+    return out
+
+def get_kr_chart_songs(limit: int = 50):
+    # KR 차트(가능하면)에서 곡을 가져옴 — K-pop 비중 높음
+    try:
+        charts = ytmusic.get_charts(country="KR")
+        songs = (charts or {}).get("songs", {}).get("items", []) or []
+        out = []
+        for s in songs[:limit]:
+            item = to_song_item_from_playlist_track(s, query="KR chart")
+            if item:
+                out.append(item)
+        return out
+    except Exception:
+        return []
+
+def build_kpop_playlist_queries(mood_key, situation_key):
+    # K-pop은 “플레이리스트를 먼저” 찾는 게 가장 확실함
+    mood_terms = MOODS[mood_key]["base_terms"]
+    sit_terms = SITUATIONS[situation_key]
+    # K-pop 강제 키워드: kpop/케이팝/가요를 꼭 넣음
+    base = ["kpop", "케이팝", "가요", "K-pop"]
+
+    queries = []
+    if sit_terms:
+        queries.append(" ".join(base + sit_terms[:3] + ["playlist"]))
+    queries.append(" ".join(base + mood_terms[:2] + ["playlist"]))
+    if sit_terms:
+        queries.append(" ".join(base + mood_terms[:2] + sit_terms[:2] + ["playlist"]))
+    # 중복 제거
+    seen = set()
+    out = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q); out.append(q)
+    return out
+
+def recommend_strict_kpop(mood_key, situation_key, limit):
+    """K-pop은 Playlist → KR chart → songs 검색 순으로 강제."""
+    combined = []
+    seen = set()
+    used_sources = []
+
+    # 1) 플레이리스트에서 먼저 추출
+    pl_queries = build_kpop_playlist_queries(mood_key, situation_key)
+    for q in pl_queries:
+        pls = search_playlists(q, limit=3)
+        for pl in pls:
+            pid = pl.get("browseId")
+            if not pid:
+                continue
+            tracks = get_playlist_tracks(pid, limit=200)
+            for t in tracks:
+                item = to_song_item_from_playlist_track(t, query=f"playlist: {q}")
+                if not item:
+                    continue
+                key = normalize_key(item["title"], item["artists"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                combined.append(item)
+                if len(combined) >= limit:
+                    used_sources.append(f"Playlist({q})")
+                    return combined, pl_queries, used_sources
+        used_sources.append(f"Playlist({q})")
+
+    # 2) KR 차트에서 보강
+    kr = get_kr_chart_songs(limit=100)
+    if kr:
+        used_sources.append("KR charts")
+    for item in kr:
+        key = normalize_key(item["title"], item["artists"])
+        if key in seen:
             continue
+        seen.add(key)
+        combined.append(item)
+        if len(combined) >= limit:
+            return combined, pl_queries, used_sources
 
-        title = r.get("title", "Unknown")
-        artists = ", ".join([a.get("name", "") for a in (r.get("artists") or [])]) or "Unknown"
-        album = (r.get("album") or {}).get("name")
-        duration = r.get("duration")
-        thumb = pick_thumbnail(r.get("thumbnails") or [])
-        url = f"https://music.youtube.com/watch?v={video_id}"
+    # 3) 최후: K-pop 키워드로 곡 검색
+    fallback_terms = ["kpop", "케이팝", "가요"] + (SITUATIONS[situation_key][:2] if SITUATIONS[situation_key] else [])
+    fallback_q = " ".join(fallback_terms + ["playlist"])
+    used_sources.append(f"Song search({fallback_q})")
+    for item in search_songs(fallback_q, limit=limit * 2):
+        key = normalize_key(item["title"], item["artists"])
+        if key in seen:
+            continue
+        seen.add(key)
+        combined.append(item)
+        if len(combined) >= limit:
+            break
 
-        songs.append(
-            {
-                "title": title,
-                "artists": artists,
-                "album": album,
-                "duration": duration,
-                "thumb": thumb,
-                "url": url,
-                "query": query,
-            }
-        )
-    return songs
+    return combined, pl_queries, used_sources
 
+def recommend_general(mood_key, situation_key, genre_key, limit):
+    """K-pop 외 장르는 기존 방식(검색) + 상황/장르 키워드 강화."""
+    mood_terms = MOODS[mood_key]["base_terms"]
+    sit_terms = SITUATIONS[situation_key]
+    gen_terms = GENRES[genre_key]
 
-def recommend(mood_key: str, situation_key: str, genre_key: str, limit: int):
-    queries = build_queries(mood_key, situation_key, genre_key)
+    queries = []
+    # 상황+장르를 더 강하게 반영
+    if gen_terms and sit_terms:
+        queries.append(" ".join(gen_terms[:2] + sit_terms[:3] + ["playlist"]))
+        queries.append(" ".join(mood_terms[:2] + gen_terms[:2] + sit_terms[:2]))
+    if gen_terms:
+        queries.append(" ".join(gen_terms[:3] + ["playlist"]))
+        queries.append(" ".join(mood_terms[:2] + gen_terms[:2]))
+    if sit_terms:
+        queries.append(" ".join(sit_terms[:4] + ["playlist"]))
+    queries.append(" ".join(mood_terms[:3]))
+
+    # 중복 제거
+    seen_q = set()
+    queries = [q for q in queries if not (q in seen_q or seen_q.add(q))]
 
     combined = []
     seen = set()
-
-    # 쿼리 여러 개로 분산 검색해서 다양성 확보
-    per_query = max(4, limit // max(1, len(queries)))
     for q in queries:
-        for s in search_songs(q, limit=per_query):
-            key = (s["title"], s["artists"])
+        for item in search_songs(q, limit=max(4, limit // max(1, len(queries)))):
+            key = normalize_key(item["title"], item["artists"])
             if key in seen:
                 continue
             seen.add(key)
-            combined.append(s)
+            combined.append(item)
             if len(combined) >= limit:
-                return combined, queries
+                return combined, queries, ["Song search"]
 
-    # 결과가 부족하면 마지막으로 넓은 검색(보강)
-    if len(combined) < limit:
-        fallback_query = " ".join(MOODS[mood_key]["base_terms"][:2] + ["playlist"])
-        for s in search_songs(fallback_query, limit=limit * 2):
-            key = (s["title"], s["artists"])
-            if key in seen:
-                continue
-            seen.add(key)
-            combined.append(s)
-            if len(combined) >= limit:
-                break
+    return combined, queries, ["Song search"]
 
-    return combined, queries
-
-
-# -----------------------
-# UI
-# -----------------------
-st.title("🎧 기분 + 상황 기반 음악 추천 (YouTube Music)")
-st.caption("기분/상황/장르 옵션을 조합해 YouTube Music에서 곡을 검색해 추천해줘요.")
+# ---------------- UI ----------------
+st.title("🎧 기분 + 상황 + 장르 기반 음악 추천 (YouTube Music)")
+st.caption("K-pop은 ‘플레이리스트/차트 기반’으로 강제 추천해서 K-pop이 확실히 뜨게 했어요.")
 
 with st.sidebar:
-    st.header("옵션 선택")
+    st.header("옵션")
     mood_key = st.selectbox("오늘의 기분", list(MOODS.keys()))
-
-    # ✅ 상황 추가 (요구사항)
-    situation_key = st.selectbox("지금 상황(예: 드라이브)", list(SITUATIONS.keys()), index=1)
-
-    # ✅ 장르 추가 (선택 옵션, 필수 아님)
+    situation_key = st.selectbox("지금 상황", list(SITUATIONS.keys()), index=1)
     genre_key = st.selectbox("원하는 장르(선택)", list(GENRES.keys()), index=0)
-
     limit = st.slider("추천 곡 개수", 5, 20, 10)
-    st.divider()
     go = st.button("🎶 추천 받기", use_container_width=True)
 
 if go:
-    mood = MOODS[mood_key]
-    st.subheader(f"✨ 추천 결과: {mood_key} / {situation_key} / {genre_key}")
-    st.info(f"이유: {mood['reason']}")
+    st.subheader(f"✨ 추천: {mood_key} / {situation_key} / {genre_key}")
+    st.info(f"이유: {MOODS[mood_key]['reason']}")
 
-    with st.spinner("YouTube Music에서 곡을 찾는 중..."):
-        songs, used_queries = recommend(mood_key, situation_key, genre_key, limit)
+    with st.spinner("추천 중..."):
+        if genre_key == "K-pop":
+            songs, used_queries, sources = recommend_strict_kpop(mood_key, situation_key, limit)
+        else:
+            songs, used_queries, sources = recommend_general(mood_key, situation_key, genre_key, limit)
 
     if not songs:
-        st.warning("검색 결과가 비어 있어요. 다른 상황/장르로 바꿔서 다시 시도해봐!")
+        st.warning("추천 결과가 비어 있어요. 상황/장르를 바꿔서 다시 시도해봐!")
         st.stop()
 
-    with st.expander("🔍 사용된 검색 쿼리 보기"):
+    with st.expander("🔍 사용된 쿼리/소스 보기"):
+        st.write("**소스:** " + ", ".join(sources))
         for q in used_queries:
             st.write(f"- {q}")
 
-    for i, s in enumerate(songs, start=1):
+    for i, s in enumerate(songs[:limit], start=1):
         with st.container(border=True):
             cols = st.columns([1, 3])
             with cols[0]:
@@ -229,6 +267,6 @@ if go:
                 if s["duration"]:
                     st.write(f"**길이:** {s['duration']}")
                 st.link_button("YouTube Music에서 열기", s["url"])
-                st.caption(f"검색어: {s['query']}")
+                st.caption(f"출처/검색어: {s['query']}")
 else:
-    st.write("왼쪽에서 **기분 + 상황(예: 드라이브)** 을 고르고, 원하면 장르도 선택한 뒤 **추천 받기**를 눌러줘 🙂")
+    st.write("왼쪽에서 기분/상황을 고르고, 장르는 선택(특히 K-pop)한 뒤 **추천 받기**를 눌러줘 🙂")
